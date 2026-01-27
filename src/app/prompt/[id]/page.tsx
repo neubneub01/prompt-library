@@ -5,7 +5,7 @@ import { PromptPreview } from "@/components/prompt-preview";
 import { RunPanel } from "@/components/run-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Play, FileText } from "lucide-react";
+import { ArrowLeft, Play, FileText, Pencil } from "lucide-react";
 
 interface PromptPageProps {
   params: Promise<{ id: string }>;
@@ -22,12 +22,20 @@ export default async function PromptPage({ params }: PromptPageProps) {
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="mb-6">
-        <Link href="/">
-          <Button variant="ghost" size="sm" className="mb-4">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Library
-          </Button>
-        </Link>
+        <div className="flex items-center justify-between mb-4">
+          <Link href="/">
+            <Button variant="ghost" size="sm">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Library
+            </Button>
+          </Link>
+          <Link href={`/prompts/${prompt.id}/edit`}>
+            <Button variant="outline" size="sm">
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit Prompt
+            </Button>
+          </Link>
+        </div>
         <h1 className="text-2xl font-bold">{prompt.title}</h1>
         <p className="text-muted-foreground mt-1">{prompt.description}</p>
       </div>

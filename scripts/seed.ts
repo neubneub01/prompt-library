@@ -1,5 +1,6 @@
-import { getDb, prompts, rebuildFtsIndex } from "../src/lib/db";
-import type { NewPrompt } from "../src/lib/db/schema";
+import { getDb, prompts, promptPresets, rebuildFtsIndex } from "../src/lib/db";
+import type { NewPrompt, ConfigFieldSchema } from "../src/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 // Prompts from your CSV - thinking frameworks and decision tools
 const csvPrompts: NewPrompt[] = [
@@ -52,6 +53,49 @@ Be thorough but practical - good architecture balances ideal design with real-wo
         placeholder: "Small team, 3-month timeline, must use existing database...",
       },
     },
+    configSchema: {
+      depth_mode: {
+        type: "select",
+        label: "Depth Mode",
+        description: "Level of detail in the architecture output",
+        options: ["MVP", "Production", "Enterprise"],
+        default: "MVP",
+      },
+      packetization: {
+        type: "boolean",
+        label: "Packetization",
+        description: "Break output into digestible packets with continuation prompts",
+        default: true,
+      },
+      decision_budget: {
+        type: "select",
+        label: "Decision Budget",
+        description: "How strictly to limit architectural decisions",
+        options: ["strict", "relaxed"],
+        default: "strict",
+      },
+      structure_bias: {
+        type: "select",
+        label: "Structure Bias",
+        description: "Preference for project structure",
+        options: ["single", "monorepo"],
+        default: "single",
+      },
+      include_auth: {
+        type: "select",
+        label: "Include Auth",
+        description: "Whether to include authentication architecture",
+        options: ["auto", "force", "skip"],
+        default: "auto",
+      },
+      include_testing: {
+        type: "select",
+        label: "Include Testing",
+        description: "Whether to include testing strategy",
+        options: ["auto", "force", "skip"],
+        default: "auto",
+      },
+    } as Record<string, ConfigFieldSchema>,
   },
   {
     title: "The Scenario Planner",
@@ -1136,12 +1180,58 @@ After the interrogation, provide:
   },
 ];
 
+// App Architect preset configurations
+const appArchitectPresets: { name: string; description: string; config: Record<string, unknown>; isDefault: boolean }[] = [
+  {
+    name: "MVP",
+    description: "Fast iteration mode - minimal viable architecture for quick validation",
+    config: {
+      depth_mode: "MVP",
+      packetization: true,
+      decision_budget: "strict",
+      structure_bias: "single",
+      include_auth: "auto",
+      include_testing: "auto",
+    },
+    isDefault: true,
+  },
+  {
+    name: "Production",
+    description: "Production-ready architecture with testing and best practices",
+    config: {
+      depth_mode: "Production",
+      packetization: true,
+      decision_budget: "strict",
+      structure_bias: "single",
+      include_auth: "auto",
+      include_testing: "force",
+    },
+    isDefault: false,
+  },
+  {
+    name: "Enterprise",
+    description: "Full enterprise architecture with monorepo, auth, and comprehensive testing",
+    config: {
+      depth_mode: "Enterprise",
+      packetization: true,
+      decision_budget: "strict",
+      structure_bias: "monorepo",
+      include_auth: "force",
+      include_testing: "force",
+    },
+    isDefault: false,
+  },
+];
+
 async function seed() {
   console.log("🌱 Starting seed...");
   
   const db = getDb();
   
-  // Clear existing data
+  // Clear existing data (presets first due to FK constraint)
+  console.log("Clearing existing presets...");
+  await db.delete(promptPresets);
+  
   console.log("Clearing existing prompts...");
   await db.delete(prompts);
   
@@ -1157,7 +1247,28 @@ async function seed() {
   console.log("Rebuilding FTS index...");
   rebuildFtsIndex();
   
-  console.log("✅ Seed complete!");
+  // Find App Architect prompt and create presets
+  console.log("\nCreating presets for App Architect...");
+  const appArchitect = await db.query.prompts.findFirst({
+    where: eq(prompts.title, "The App Architect"),
+  });
+  
+  if (appArchitect) {
+    for (const preset of appArchitectPresets) {
+      await db.insert(promptPresets).values({
+        promptId: appArchitect.id,
+        name: preset.name,
+        description: preset.description,
+        configJson: preset.config,
+        isDefault: preset.isDefault,
+      });
+      console.log(`  ✓ Preset: ${preset.name}${preset.isDefault ? " (default)" : ""}`);
+    }
+  } else {
+    console.log("  ⚠ App Architect prompt not found - skipping presets");
+  }
+  
+  console.log("\n✅ Seed complete!");
 }
 
 seed().catch((error) => {

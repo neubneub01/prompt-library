@@ -1,5 +1,5 @@
 import { eq, desc, asc, sql, and, inArray } from "drizzle-orm";
-import { getDb, getSqlite, prompts, runs, type Prompt, type NewPrompt, type Run, type NewRun } from "./index";
+import { getDb, getSqlite, prompts, runs, promptPresets, type Prompt, type NewPrompt, type Run, type NewRun, type PromptPreset, type NewPromptPreset } from "./index";
 
 // ============ Prompt Queries ============
 
@@ -242,4 +242,99 @@ export async function getStats(): Promise<{
     totalRuns: runStats.count,
     totalTokens: runStats.tokens,
   };
+}
+
+// ============ Preset Queries ============
+
+export async function getPresetsByPromptId(promptId: string): Promise<PromptPreset[]> {
+  const db = getDb();
+  return db
+    .select()
+    .from(promptPresets)
+    .where(eq(promptPresets.promptId, promptId))
+    .orderBy(desc(promptPresets.isDefault), asc(promptPresets.name));
+}
+
+export async function getPresetById(id: string): Promise<PromptPreset | undefined> {
+  const db = getDb();
+  const result = await db.select().from(promptPresets).where(eq(promptPresets.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getDefaultPreset(promptId: string): Promise<PromptPreset | undefined> {
+  const db = getDb();
+  const result = await db
+    .select()
+    .from(promptPresets)
+    .where(and(
+      eq(promptPresets.promptId, promptId),
+      eq(promptPresets.isDefault, true)
+    ))
+    .limit(1);
+  return result[0];
+}
+
+export async function createPreset(preset: NewPromptPreset): Promise<PromptPreset> {
+  const db = getDb();
+  
+  // If this is being set as default, unset any existing default for this prompt
+  if (preset.isDefault) {
+    await db
+      .update(promptPresets)
+      .set({ isDefault: false })
+      .where(eq(promptPresets.promptId, preset.promptId));
+  }
+  
+  const result = await db.insert(promptPresets).values(preset).returning();
+  return result[0];
+}
+
+export async function updatePreset(id: string, updates: Partial<NewPromptPreset>): Promise<PromptPreset | undefined> {
+  const db = getDb();
+  
+  // If setting as default, first get the preset to know its promptId
+  if (updates.isDefault) {
+    const existing = await getPresetById(id);
+    if (existing) {
+      await db
+        .update(promptPresets)
+        .set({ isDefault: false })
+        .where(eq(promptPresets.promptId, existing.promptId));
+    }
+  }
+  
+  const result = await db
+    .update(promptPresets)
+    .set({ ...updates, updatedAt: new Date() })
+    .where(eq(promptPresets.id, id))
+    .returning();
+  return result[0];
+}
+
+export async function deletePreset(id: string): Promise<boolean> {
+  const db = getDb();
+  const result = await db.delete(promptPresets).where(eq(promptPresets.id, id)).returning();
+  return result.length > 0;
+}
+
+export async function setDefaultPreset(presetId: string): Promise<boolean> {
+  const db = getDb();
+  
+  // Get the preset to find its promptId
+  const preset = await getPresetById(presetId);
+  if (!preset) return false;
+  
+  // Unset all defaults for this prompt
+  await db
+    .update(promptPresets)
+    .set({ isDefault: false })
+    .where(eq(promptPresets.promptId, preset.promptId));
+  
+  // Set this one as default
+  await db
+    .update(promptPresets)
+    .set({ isDefault: true, updatedAt: new Date() })
+    .where(eq(promptPresets.id, presetId));
+  
+  return true;
 }

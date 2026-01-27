@@ -1,10 +1,12 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { SearchBar } from "@/components/search-bar";
 import { PromptGrid } from "@/components/prompt-grid";
 import { fetchPrompts, fetchTags, fetchCategories } from "@/actions/prompts";
 import { fetchStats } from "@/actions/runs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Library, Zap, MessageSquare } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Library, Zap, MessageSquare, Plus } from "lucide-react";
 
 interface PageProps {
   searchParams: Promise<{
@@ -86,6 +88,12 @@ export default async function HomePage({ searchParams }: PageProps) {
       <div className="mb-8">
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-3xl font-bold">Prompt Library</h1>
+          <Link href="/prompts/new">
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Prompt
+            </Button>
+          </Link>
         </div>
         <p className="text-muted-foreground mb-4">
           Browse, search, and run your collection of AI prompts

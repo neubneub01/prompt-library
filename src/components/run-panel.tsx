@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -13,8 +13,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import { providers, type ProviderId } from "@/lib/llm/providers";
-import type { Prompt, VariableSchema } from "@/lib/db/schema";
+import type { Prompt, VariableSchema, PromptPreset, ConfigFieldSchema } from "@/lib/db/schema";
+import { fetchPresetsByPromptId, savePreset, makePresetDefault } from "@/actions/presets";
+import { parseContinuation } from "@/lib/llm/continuation";
+import { toast } from "sonner";
 import { 
   Play, 
   Loader2, 
@@ -22,6 +35,10 @@ import {
   Check, 
   RefreshCw,
   Clock,
+  Settings2,
+  Save,
+  Star,
+  FastForward,
 } from "lucide-react";
 
 interface RunPanelProps {
@@ -30,7 +47,7 @@ interface RunPanelProps {
 
 export function RunPanel({ prompt }: RunPanelProps) {
   const [provider, setProvider] = useState<ProviderId>("openai");
-  const [model, setModel] = useState(providers.openai.models[0].id);
+  const [model, setModel] = useState<string>(providers.openai.models[0].id);
   const [variables, setVariables] = useState<Record<string, string>>({});
   const [additionalInput, setAdditionalInput] = useState("");
   const [copied, setCopied] = useState(false);
@@ -42,7 +59,52 @@ export function RunPanel({ prompt }: RunPanelProps) {
   const responseRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Preset state
+  const [presets, setPresets] = useState<PromptPreset[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [configOverride, setConfigOverride] = useState<Record<string, unknown>>({});
+  const [configDialogOpen, setConfigDialogOpen] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
+  const [newPresetDescription, setNewPresetDescription] = useState("");
+
+  // Continuation state for packetization
+  const [runCount, setRunCount] = useState(0); // Track run sequence for packet numbering
+
   const variablesSchema = prompt.variablesSchema || {};
+  const configSchema = prompt.configSchema as Record<string, ConfigFieldSchema> | null;
+  const hasPresets = presets.length > 0;
+  const hasConfigSchema = configSchema && Object.keys(configSchema).length > 0;
+
+  // Parse continuation from response (memoized to avoid recalculating on every render)
+  const continuation = useMemo(() => {
+    if (!response || isLoading) return null;
+    return parseContinuation(response);
+  }, [response, isLoading]);
+
+  // Get current effective config (preset + overrides)
+  const effectiveConfig = (): Record<string, unknown> => {
+    const selectedPreset = presets.find(p => p.id === selectedPresetId);
+    const baseConfig = selectedPreset?.configJson || {};
+    return { ...baseConfig, ...configOverride };
+  };
+
+  // Load presets
+  useEffect(() => {
+    async function loadPresets() {
+      const loaded = await fetchPresetsByPromptId(prompt.id);
+      setPresets(loaded);
+      
+      // Select default preset if exists
+      const defaultPreset = loaded.find(p => p.isDefault);
+      if (defaultPreset) {
+        setSelectedPresetId(defaultPreset.id);
+      } else if (loaded.length > 0) {
+        setSelectedPresetId(loaded[0].id);
+      }
+    }
+    loadPresets();
+  }, [prompt.id]);
 
   // Initialize variables with defaults
   useEffect(() => {
@@ -58,7 +120,6 @@ export function RunPanel({ prompt }: RunPanelProps) {
   // Scroll to bottom on new response content and scroll into view
   useEffect(() => {
     if (responseRef.current) {
-      // Scroll the response container to bottom as new content arrives
       responseRef.current.scrollTop = responseRef.current.scrollHeight;
     }
   }, [response]);
@@ -79,7 +140,54 @@ export function RunPanel({ prompt }: RunPanelProps) {
     setVariables((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleRun = async () => {
+  const handlePresetChange = (presetId: string) => {
+    setSelectedPresetId(presetId);
+    setConfigOverride({}); // Reset overrides when switching presets
+  };
+
+  const handleConfigChange = (key: string, value: unknown) => {
+    setConfigOverride(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSaveAsPreset = async () => {
+    if (!newPresetName.trim()) return;
+    
+    const saved = await savePreset({
+      promptId: prompt.id,
+      name: newPresetName.trim(),
+      description: newPresetDescription.trim() || undefined,
+      configJson: effectiveConfig(),
+      isDefault: false,
+    });
+    
+    if (saved) {
+      setPresets(prev => [...prev, saved]);
+      setSelectedPresetId(saved.id);
+      setConfigOverride({});
+      setSaveDialogOpen(false);
+      setNewPresetName("");
+      setNewPresetDescription("");
+      toast.success(`Preset "${saved.name}" created`);
+    } else {
+      toast.error("Failed to save preset");
+    }
+  };
+
+  const handleSetDefault = async (presetId: string) => {
+    const success = await makePresetDefault(presetId);
+    if (success) {
+      setPresets(prev => prev.map(p => ({
+        ...p,
+        isDefault: p.id === presetId,
+      })));
+      const preset = presets.find(p => p.id === presetId);
+      toast.success(`"${preset?.name}" set as default`);
+    } else {
+      toast.error("Failed to set default preset");
+    }
+  };
+
+  const handleRun = async (continuationInput?: string) => {
     // Cancel any existing request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -91,8 +199,12 @@ export function RunPanel({ prompt }: RunPanelProps) {
     setLatency(null);
     const currentStartTime = Date.now();
     setStartTime(currentStartTime);
+    setRunCount(prev => prev + 1);
 
     abortControllerRef.current = new AbortController();
+
+    // Determine user input - either continuation or additional input
+    const userInputToSend = continuationInput || additionalInput;
 
     try {
       const res = await fetch("/api/chat", {
@@ -100,12 +212,14 @@ export function RunPanel({ prompt }: RunPanelProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           promptId: prompt.id,
+          presetId: selectedPresetId,
+          configOverride: Object.keys(configOverride).length > 0 ? configOverride : undefined,
           provider,
           model,
           systemPrompt: prompt.systemTemplate,
           userPrompt: prompt.userTemplate,
           variables,
-          userInput: additionalInput,
+          userInput: userInputToSend,
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -150,6 +264,14 @@ export function RunPanel({ prompt }: RunPanelProps) {
     }
   };
 
+  const handleContinue = () => {
+    if (continuation?.prompt) {
+      // Clear additional input since we're using continuation
+      setAdditionalInput("");
+      handleRun(continuation.prompt);
+    }
+  };
+
   const handleCopy = async () => {
     if (response) {
       await navigator.clipboard.writeText(response);
@@ -167,6 +289,7 @@ export function RunPanel({ prompt }: RunPanelProps) {
     setLatency(null);
     setAdditionalInput("");
     setIsLoading(false);
+    setRunCount(0);
   };
 
   const providerModels = providers[provider].models;
@@ -213,8 +336,181 @@ export function RunPanel({ prompt }: RunPanelProps) {
     );
   };
 
+  const renderConfigInput = (key: string, schema: ConfigFieldSchema) => {
+    const currentConfig = effectiveConfig();
+    const value = key in configOverride ? configOverride[key] : currentConfig[key];
+    
+    if (schema.type === "boolean") {
+      return (
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <Label>{schema.label}</Label>
+            {schema.description && (
+              <p className="text-xs text-muted-foreground">{schema.description}</p>
+            )}
+          </div>
+          <Switch
+            checked={value as boolean}
+            onCheckedChange={(checked) => handleConfigChange(key, checked)}
+          />
+        </div>
+      );
+    }
+    
+    if (schema.type === "select" && schema.options) {
+      return (
+        <div className="space-y-2">
+          <Label>{schema.label}</Label>
+          {schema.description && (
+            <p className="text-xs text-muted-foreground">{schema.description}</p>
+          )}
+          <Select
+            value={value as string}
+            onValueChange={(v) => handleConfigChange(key, v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {schema.options.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {option}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="space-y-2">
+        <Label>{schema.label}</Label>
+        {schema.description && (
+          <p className="text-xs text-muted-foreground">{schema.description}</p>
+        )}
+        <Input
+          value={value as string || ""}
+          onChange={(e) => handleConfigChange(key, e.target.value)}
+        />
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
+      {/* Preset Selection (only show if presets exist or configSchema exists) */}
+      {(hasPresets || hasConfigSchema) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Settings2 className="h-4 w-4" />
+              Preset Configuration
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <div className="flex-1 space-y-2">
+                <Label>Preset</Label>
+                <Select
+                  value={selectedPresetId || ""}
+                  onValueChange={handlePresetChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a preset..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {presets.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        <span className="flex items-center gap-2">
+                          {preset.name}
+                          {preset.isDefault && (
+                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                          )}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {/* Config Dialog */}
+              {hasConfigSchema && (
+                <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="icon" className="mt-8">
+                      <Settings2 className="h-4 w-4" />
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Configuration Toggles</DialogTitle>
+                      <DialogDescription>
+                        Customize the prompt behavior. Changes override the selected preset.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4 max-h-96 overflow-y-auto">
+                      {Object.entries(configSchema!).map(([key, schema]) => (
+                        <div key={key}>
+                          {renderConfigInput(key, schema)}
+                        </div>
+                      ))}
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setConfigOverride({})}>
+                        Reset to Preset
+                      </Button>
+                      <Button onClick={() => setConfigDialogOpen(false)}>
+                        Done
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </div>
+            
+            {/* Selected preset description */}
+            {selectedPresetId && (
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">
+                  {presets.find(p => p.id === selectedPresetId)?.description}
+                </p>
+                <div className="flex gap-1">
+                  {!presets.find(p => p.id === selectedPresetId)?.isDefault && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleSetDefault(selectedPresetId)}
+                      className="text-xs"
+                    >
+                      <Star className="h-3 w-3 mr-1" />
+                      Set Default
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {/* Show active overrides badge */}
+            {Object.keys(configOverride).length > 0 && (
+              <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+                <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 rounded">
+                  {Object.keys(configOverride).length} override(s) active
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfigOverride({})}
+                  className="h-6 text-xs"
+                >
+                  Reset
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Model Selection */}
       <Card>
         <CardHeader className="pb-3">
@@ -305,7 +601,7 @@ export function RunPanel({ prompt }: RunPanelProps) {
       <div className="flex gap-2">
         <Button 
           type="button"
-          onClick={handleRun} 
+          onClick={() => handleRun()} 
           disabled={isLoading} 
           className="flex-1"
         >
@@ -321,6 +617,53 @@ export function RunPanel({ prompt }: RunPanelProps) {
             </>
           )}
         </Button>
+        
+        {/* Save as Preset Dialog */}
+        {hasConfigSchema && (
+          <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="icon" title="Save as new preset">
+                <Save className="h-4 w-4" />
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Save as New Preset</DialogTitle>
+                <DialogDescription>
+                  Save the current configuration as a reusable preset.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Preset Name</Label>
+                  <Input
+                    value={newPresetName}
+                    onChange={(e) => setNewPresetName(e.target.value)}
+                    placeholder="e.g., My Custom Config"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Description (optional)</Label>
+                  <Textarea
+                    value={newPresetDescription}
+                    onChange={(e) => setNewPresetDescription(e.target.value)}
+                    placeholder="Describe what this preset is for..."
+                    rows={2}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveAsPreset} disabled={!newPresetName.trim()}>
+                  Save Preset
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+        
         {(response || error) && (
           <>
             <Button variant="outline" size="icon" onClick={handleCopy} disabled={!response}>
@@ -354,6 +697,11 @@ export function RunPanel({ prompt }: RunPanelProps) {
               <CardTitle className="text-base flex items-center gap-2">
                 {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
                 Response
+                {runCount > 1 && (
+                  <span className="text-xs font-normal text-muted-foreground">
+                    (Packet {runCount})
+                  </span>
+                )}
               </CardTitle>
               {latency && (
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -365,7 +713,7 @@ export function RunPanel({ prompt }: RunPanelProps) {
               )}
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div 
               ref={responseRef}
               className="h-[400px] overflow-y-auto rounded-md border bg-background p-4"
@@ -378,6 +726,28 @@ export function RunPanel({ prompt }: RunPanelProps) {
                 )}
               </div>
             </div>
+            
+            {/* Continue Button - shown when continuation prompt is detected */}
+            {continuation?.found && !isLoading && (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-primary">
+                    Continuation Available
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                    {continuation.prompt}
+                  </p>
+                </div>
+                <Button 
+                  onClick={handleContinue}
+                  className="shrink-0"
+                  size="sm"
+                >
+                  <FastForward className="mr-2 h-4 w-4" />
+                  Continue
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
