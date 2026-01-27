@@ -2,6 +2,12 @@
 
 # dependencies
 /node_modules
+
+# database
+/data/
+*.db
+*.db-shm
+*.db-wal
 /.pnp
 .pnp.*
 .yarn/*

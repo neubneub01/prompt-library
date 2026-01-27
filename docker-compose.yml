@@ -1,0 +1,35 @@
+services:
+  prompt-library:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prompt-library
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATA_DIR=/app
+      # LLM API Keys - set these in your .env file
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
+    volumes:
+      # Persist SQLite database
+      - prompt-library-data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - prompt-library-network
+
+volumes:
+  prompt-library-data:
+    driver: local
+
+networks:
+  prompt-library-network:
+    driver: bridge
