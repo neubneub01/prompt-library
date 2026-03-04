@@ -3,9 +3,10 @@ import Link from "next/link";
 import { fetchPromptById } from "@/actions/prompts";
 import { PromptPreview } from "@/components/prompt-preview";
 import { RunPanel } from "@/components/run-panel";
+import { PromptComparison } from "@/components/prompt-comparison";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Play, FileText, Pencil } from "lucide-react";
+import { ArrowLeft, Play, FileText, Pencil, GitCompareArrows } from "lucide-react";
 
 interface PromptPageProps {
   params: Promise<{ id: string }>;
@@ -46,6 +47,10 @@ export default async function PromptPage({ params }: PromptPageProps) {
             <Play className="h-4 w-4" />
             Run
           </TabsTrigger>
+          <TabsTrigger value="compare" className="gap-2">
+            <GitCompareArrows className="h-4 w-4" />
+            Compare
+          </TabsTrigger>
           <TabsTrigger value="details" className="gap-2">
             <FileText className="h-4 w-4" />
             Details
@@ -63,6 +68,10 @@ export default async function PromptPage({ params }: PromptPageProps) {
               <RunPanel prompt={prompt} />
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="compare">
+          <PromptComparison prompt={prompt} />
         </TabsContent>
 
         <TabsContent value="details">
