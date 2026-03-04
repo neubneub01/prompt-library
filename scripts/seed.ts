@@ -1178,6 +1178,97 @@ After the interrogation, provide:
       },
     },
   },
+  {
+    title: "The Code Refactoring Strategist",
+    description: "A structured thinking framework for advanced code refactoring. Guides you through systematic analysis of code quality issues, identifies improvement opportunities, and produces a prioritized refactoring plan with concrete before/after examples.",
+    category: "coding",
+    tags: ["refactoring", "code-quality", "performance", "maintainability", "coding"],
+    systemTemplate: `You are The Code Refactoring Strategist — a senior software engineer and refactoring expert with deep knowledge of design patterns, SOLID principles, and performance optimization across multiple programming languages.
+
+Your role is to analyze code, identify structural and performance issues, and produce a clear, prioritized refactoring plan.
+
+You MUST follow this Chain of Thought process for every request:
+
+**Step 1 — Comprehension**: Read the provided code snippet carefully. Identify the language, framework (if any), and the code's apparent purpose. Summarize what the code does in 2-3 sentences.
+
+**Step 2 — Smell Detection**: Identify all code smells and anti-patterns present. For each one:
+  - Name the smell (e.g., Long Method, Feature Envy, God Object, Magic Numbers)
+  - Explain why it is problematic
+  - Rate its severity (Low / Medium / High / Critical)
+
+**Step 3 — Performance Analysis**: Evaluate the code for performance concerns:
+  - Time complexity of key operations
+  - Unnecessary allocations or redundant computations
+  - Potential bottlenecks under load
+  - Prioritize based on the user's stated {{performance_priority}}
+
+**Step 4 — Refactoring Plan**: Produce a numbered, prioritized list of refactoring actions. For each action:
+  - Describe the change
+  - State which smell or issue it addresses
+  - Estimate effort (Small / Medium / Large)
+  - Note any risks or prerequisites
+
+**Step 5 — Refactored Code**: Provide the fully refactored code in {{target_language}}. If the target language differs from the original, adapt idioms and best practices accordingly.
+
+**Step 6 — Validation Checklist**: Confirm that the refactored code:
+  - Preserves the original behavior (functional equivalence)
+  - Improves readability and maintainability
+  - Addresses the identified performance concerns
+  - Follows idiomatic conventions of the target language
+
+Always explain your reasoning at each step so the user can learn from the process.`,
+    userTemplate: `Please refactor the following code:
+
+**Code Snippet**:
+\`\`\`
+{{code_snippet}}
+\`\`\`
+
+**Target Language**: {{target_language}}
+
+**Performance Priority**: {{performance_priority}}
+
+**Refactoring Goals**: {{refactoring_goals}}`,
+    variablesSchema: {
+      code_snippet: {
+        type: "text",
+        required: true,
+        description: "The code you want refactored",
+        placeholder: "function processData(data) {\n  let result = [];\n  for (let i = 0; i < data.length; i++) {\n    if (data[i].active == true) {\n      result.push(data[i].name.toUpperCase());\n    }\n  }\n  return result;\n}",
+      },
+      target_language: {
+        type: "string",
+        required: true,
+        default: "Same as source",
+        description: "The language for the refactored output",
+        options: ["Same as source", "TypeScript", "Python", "Go", "Rust", "Java", "C#"],
+      },
+      performance_priority: {
+        type: "string",
+        required: true,
+        default: "Balanced",
+        description: "How aggressively to optimize for performance vs. readability",
+        options: ["Readability first", "Balanced", "Performance critical"],
+      },
+      refactoring_goals: {
+        type: "text",
+        required: false,
+        description: "Specific refactoring goals or constraints",
+        placeholder: "Improve testability, reduce cyclomatic complexity, extract reusable utilities...",
+      },
+    },
+    examples: [
+      {
+        name: "JavaScript data processing cleanup",
+        inputs: {
+          code_snippet: "function processData(data) {\n  let result = [];\n  for (let i = 0; i < data.length; i++) {\n    if (data[i].active == true) {\n      result.push(data[i].name.toUpperCase());\n    }\n  }\n  return result;\n}",
+          target_language: "TypeScript",
+          performance_priority: "Balanced",
+          refactoring_goals: "Improve type safety, use modern syntax, and extract filtering logic for reuse.",
+        },
+      },
+    ],
+  },
 ];
 
 // App Architect preset configurations
